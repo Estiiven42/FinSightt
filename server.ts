@@ -31,7 +31,7 @@ async function initDb() {
   try {
     await client.query(`
       CREATE TABLE IF NOT EXISTS usuarios (
-        id SERIAL PRIMARY KEY,
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         nombre VARCHAR(100) NOT NULL,
         correo VARCHAR(100) UNIQUE NOT NULL,
         contrasena_hash TEXT NOT NULL,
@@ -45,12 +45,12 @@ async function initDb() {
         icono VARCHAR(50),
         tipo VARCHAR(20) CHECK (tipo IN ('ingreso', 'gasto')),
         es_personalizada BOOLEAN DEFAULT FALSE,
-        usuario_id INTEGER REFERENCES usuarios(id)
+        usuario_id UUID REFERENCES usuarios(id)
       );
 
       CREATE TABLE IF NOT EXISTS transacciones (
         id SERIAL PRIMARY KEY,
-        usuario_id INTEGER REFERENCES usuarios(id),
+        usuario_id UUID REFERENCES usuarios(id),
         tipo VARCHAR(20) CHECK (tipo IN ('ingreso', 'gasto')),
         monto DECIMAL(12, 2) NOT NULL,
         descripcion TEXT,
@@ -63,7 +63,7 @@ async function initDb() {
 
       CREATE TABLE IF NOT EXISTS presupuestos (
         id SERIAL PRIMARY KEY,
-        usuario_id INTEGER REFERENCES usuarios(id),
+        usuario_id UUID REFERENCES usuarios(id),
         categoria_id INTEGER REFERENCES categorias(id),
         monto_limite DECIMAL(12, 2) NOT NULL,
         mes INTEGER NOT NULL,
@@ -73,13 +73,13 @@ async function initDb() {
 
       CREATE TABLE IF NOT EXISTS perspectivas_ia (
         id SERIAL PRIMARY KEY,
-        usuario_id INTEGER REFERENCES usuarios(id),
+        usuario_id UUID REFERENCES usuarios(id),
         tipo VARCHAR(50),
         contenido TEXT NOT NULL,
         activo BOOLEAN DEFAULT TRUE,
         generado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `);
+    `);;
     console.log("Database initialized");
   } catch (err) {
     console.error("Database initialization failed:", err);

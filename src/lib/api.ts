@@ -16,7 +16,7 @@ api.interceptors.request.use((config) => {
 
 // --- Types ---
 export interface User {
-  id: number;
+  id: string;
   nombre: string;
   correo: string;
   moneda: string;

@@ -24,13 +24,21 @@ export function Transactions() {
   const handleAiCategorize = async () => {
     if (!formData.descripcion || !formData.monto) return;
     setIsAiLoading(true);
-    const result = await categorizeTransaction(formData.descripcion, Number(formData.monto), formData.tipo);
-    if (result) {
-      setFormData(prev => ({
-        ...prev,
-        categoria_ia: result.categoria_ia,
-        etiquetas_ia: result.etiquetas_ia
-      }));
+    try {
+      const res = await api.post('/ai/categorize', {
+        descripcion: formData.descripcion,
+        monto: Number(formData.monto),
+        tipo: formData.tipo
+      });
+      if (res.data) {
+        setFormData(prev => ({
+          ...prev,
+          categoria_ia: res.data.categoria_ia,
+          etiquetas_ia: res.data.etiquetas_ia
+        }));
+      }
+    } catch (err) {
+      console.error("AI Error:", err);
     }
     setIsAiLoading(false);
   };

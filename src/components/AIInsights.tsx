@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../lib/api';
-import { generateWeeklyInsights } from '../lib/gemini';
 import { Card, Button } from './ui';
 import { Sparkles, Loader2, TrendingUp, ShieldCheck, Zap } from 'lucide-react';
 import { format } from 'date-fns';
+import api from '../lib/api';
 
 export function AIInsights() {
   const { transactions, budgets, insights, saveAIInsight } = useAppStore();
@@ -11,9 +11,13 @@ export function AIInsights() {
 
   const handleGenerate = async () => {
     setIsLoading(true);
-    const result = await generateWeeklyInsights(transactions, budgets);
-    if (result) {
-      await saveAIInsight('Perspectiva Semanal', JSON.stringify(result));
+    try {
+      const res = await api.post('/ai/insights', { transactions, budgets });
+      if (res.data) {
+        await saveAIInsight('Perspectiva Semanal', JSON.stringify(res.data));
+      }
+    } catch (err) {
+      console.error("AI Error:", err);
     }
     setIsLoading(false);
   };

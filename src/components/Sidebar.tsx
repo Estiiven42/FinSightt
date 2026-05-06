@@ -1,4 +1,5 @@
 import React from 'react';
+import { NavLink } from 'react-router-dom';
 import { useAppStore } from '../lib/api';
 import { 
   LayoutDashboard, 
@@ -10,15 +11,15 @@ import {
 } from 'lucide-react';
 import { cn } from './ui';
 
-export function Sidebar({ currentView, setView }: { currentView: string, setView: (v: string) => void }) {
+export function Sidebar() {
   const logout = useAppStore(state => state.logout);
   const user = useAppStore(state => state.user);
 
   const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'transactions', label: 'Transacciones', icon: ReceiptText },
-    { id: 'budgets', label: 'Presupuestos', icon: BudgetIcon },
-    { id: 'ai-insights', label: 'Perspectivas IA', icon: Sparkles },
+    { label: 'Panel de Control', icon: LayoutDashboard, path: '/' },
+    { label: 'Transacciones', icon: ReceiptText, path: '/transacciones' },
+    { label: 'Presupuestos', icon: BudgetIcon, path: '/presupuestos' },
+    { label: 'Perspectivas IA', icon: Sparkles, path: '/perspectivas' },
   ];
 
   return (
@@ -34,20 +35,24 @@ export function Sidebar({ currentView, setView }: { currentView: string, setView
 
       <nav className="flex-1 px-4 space-y-1">
         {menuItems.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => setView(item.id)}
-            className={cn(
+          <NavLink
+            key={item.path}
+            to={item.path}
+            className={({ isActive }) => cn(
               "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all group",
-              currentView === item.id 
+              isActive 
                 ? "bg-black text-white shadow-md shadow-black/10" 
                 : "text-gray-500 hover:bg-gray-50 hover:text-black"
             )}
           >
-            <item.icon className={cn("w-4 h-4", currentView === item.id ? "text-white" : "text-gray-400 group-hover:text-black")} />
-            {item.label}
-            {currentView === item.id && <ChevronRight className="w-4 h-4 ml-auto opacity-50" />}
-          </button>
+            {({ isActive }) => (
+              <>
+                <item.icon className={cn("w-4 h-4", isActive ? "text-white" : "text-gray-400 group-hover:text-black")} />
+                {item.label}
+                {isActive && <ChevronRight className="w-4 h-4 ml-auto opacity-50" />}
+              </>
+            )}
+          </NavLink>
         ))}
       </nav>
 
@@ -74,3 +79,4 @@ export function Sidebar({ currentView, setView }: { currentView: string, setView
     </aside>
   );
 }
+

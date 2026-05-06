@@ -13,7 +13,6 @@ import { GoogleGenAI } from "@google/genai";
 dotenv.config();
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -260,17 +259,20 @@ async function startServer() {
   app.post("/api/ai/categorize", authenticateToken, async (req: any, res) => {
     const { descripcion, monto, tipo } = req.body;
     try {
-      const prompt = `Categorize this financial transaction: "${descripcion}" for $${monto} (${tipo}). 
-      Return a JSON object with:
-      1. "categoria_ia": string (e.g. "Alimentación", "Transporte", "Vivienda", "Salud", "Ocio", "Ingresos")
-      2. "etiquetas_ia": array of strings (relevant tags like #comida, #oficina, #lujo)
-      
-      Respond ONLY with the RAW JSON object, no markdown code blocks.`;
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Categorize this financial transaction: "${descripcion}" for $${monto} (${tipo}). 
+        Return a JSON object with:
+        1. "categoria_ia": string (e.g. "Alimentación", "Transporte", "Vivienda", "Salud", "Ocio", "Ingresos")
+        2. "etiquetas_ia": array of strings (relevant tags like #comida, #oficina, #lujo)
+        
+        Respond ONLY with the RAW JSON object, no markdown code blocks.`,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
 
-      const result = await model.generateContent(prompt);
-      const response = result.response;
-      const text = response.text();
-      res.json(JSON.parse(text));
+      res.json(JSON.parse(response.text || "{}"));
     } catch (err) {
       console.error("AI Error:", err);
       res.status(500).json({ error: "AI categorization failed" });
@@ -280,19 +282,23 @@ async function startServer() {
   app.post("/api/ai/insights", authenticateToken, async (req: any, res) => {
     const { transactions, budgets } = req.body;
     try {
-      const prompt = `Analyze these transactions and budgets:
-      Transactions: ${JSON.stringify(transactions.slice(0, 15))}
-      Budgets: ${JSON.stringify(budgets)}
-      
-      Provide in Spanish:
-      1. "prediccion_monto": total spending prediction for next week (number).
-      2. "recomendaciones": 3 saving tips (array of strings).
-      3. "analisis_presupuesto": current budget health summary.
-      
-      Respond ONLY with the RAW JSON object.`;
-
-      const result = await model.generateContent(prompt);
-      res.json(JSON.parse(result.response.text()));
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Analyze these transactions and budgets:
+        Transactions: ${JSON.stringify(transactions.slice(0, 15))}
+        Budgets: ${JSON.stringify(budgets)}
+        
+        Provide in Spanish:
+        1. "prediccion_monto": total spending prediction for next week (number).
+        2. "recomendaciones": 3 saving tips (array of strings).
+        3. "analisis_presupuesto": current budget health summary.
+        
+        Respond ONLY with the RAW JSON object.`,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+      res.json(JSON.parse(response.text || "{}"));
     } catch (err) {
       res.status(500).json({ error: "AI insights failed" });
     }

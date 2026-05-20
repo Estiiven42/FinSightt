@@ -21,7 +21,10 @@ const { Pool } = pg;
 
 const pool = new Pool({
   connectionString: process.env.SUPABASE_DB_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  max: 20, // Conexiones máximas simultáneas en el pool
+  idleTimeoutMillis: 30000, // Tiempo de inactividad antes de cerrar un cliente liberado
+  connectionTimeoutMillis: 5000 // Tiempo máximo de espera para obtener un cliente
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || "fallback_secret";
@@ -70,7 +73,9 @@ async function initDb() {
         anio INTEGER NOT NULL,
         UNIQUE(usuario_id, categoria_id, mes, anio)
       );
+    `);
 
+    await client.query(`
       CREATE TABLE IF NOT EXISTS perspectivas_ia (
         id SERIAL PRIMARY KEY,
         usuario_id UUID REFERENCES usuarios(id),
@@ -79,7 +84,68 @@ async function initDb() {
         activo BOOLEAN DEFAULT TRUE,
         generado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `);;
+    `);
+
+    // --- Enforce Foreign Key Cascades & Deletes ---
+    try {
+      await client.query(`
+        ALTER TABLE categorias DROP CONSTRAINT IF EXISTS categorias_usuario_id_fkey;
+        ALTER TABLE categorias ADD CONSTRAINT categorias_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE;
+      `);
+      await client.query(`
+        ALTER TABLE transacciones DROP CONSTRAINT IF EXISTS transacciones_usuario_id_fkey;
+        ALTER TABLE transacciones ADD CONSTRAINT transacciones_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE;
+      `);
+      await client.query(`
+        ALTER TABLE transacciones DROP CONSTRAINT IF EXISTS transacciones_categoria_id_fkey;
+        ALTER TABLE transacciones ADD CONSTRAINT transacciones_categoria_id_fkey FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE SET NULL;
+      `);
+      await client.query(`
+        ALTER TABLE presupuestos DROP CONSTRAINT IF EXISTS presupuestos_usuario_id_fkey;
+        ALTER TABLE presupuestos ADD CONSTRAINT presupuestos_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE;
+      `);
+      await client.query(`
+        ALTER TABLE presupuestos DROP CONSTRAINT IF EXISTS presupuestos_categoria_id_fkey;
+        ALTER TABLE presupuestos ADD CONSTRAINT presupuestos_categoria_id_fkey FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE CASCADE;
+      `);
+      await client.query(`
+        ALTER TABLE perspectivas_ia DROP CONSTRAINT IF EXISTS perspectivas_ia_usuario_id_fkey;
+        ALTER TABLE perspectivas_ia ADD CONSTRAINT perspectivas_ia_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE;
+      `);
+    } catch (constraintErr) {
+      console.warn("Constraint updates skipped or already configured:", constraintErr);
+    }
+
+    // --- Create Custom Highly Efficient Indices ---
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_transacciones_usuario_id ON transacciones(usuario_id);
+      CREATE INDEX IF NOT EXISTS idx_transacciones_categoria_id ON transacciones(categoria_id);
+      CREATE INDEX IF NOT EXISTS idx_transacciones_fecha_transaccion ON transacciones(fecha_transaccion);
+      CREATE INDEX IF NOT EXISTS idx_categorias_usuario_id ON categorias(usuario_id);
+      CREATE INDEX IF NOT EXISTS idx_presupuestos_usuario_id ON presupuestos(usuario_id);
+      CREATE INDEX IF NOT EXISTS idx_perspectivas_ia_usuario_id ON perspectivas_ia(usuario_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_categorias_usuario_nombre_tipo ON categorias (usuario_id, nombre, tipo) WHERE usuario_id IS NOT NULL;
+    `);
+
+    const catCheck = await client.query("SELECT COUNT(*) FROM categorias WHERE usuario_id IS NULL");
+    if (parseInt(catCheck.rows[0].count) === 0) {
+      await client.query(`
+        INSERT INTO categorias (nombre, icono, tipo, es_personalizada) VALUES 
+        ('Alimentación', 'Utensils', 'gasto', FALSE),
+        ('Transporte', 'Car', 'gasto', FALSE),
+        ('Vivienda', 'Home', 'gasto', FALSE),
+        ('Salud', 'HeartPulse', 'gasto', FALSE),
+        ('Ocio', 'Gamepad2', 'gasto', FALSE),
+        ('Sueldo', 'Briefcase', 'ingreso', FALSE),
+        ('Inversiones', 'TrendingUp', 'ingreso', FALSE),
+        ('Educación', 'GraduationCap', 'gasto', FALSE),
+        ('Servicios', 'Lightbulb', 'gasto', FALSE),
+        ('Otros Gastos', 'Receipt', 'gasto', FALSE),
+        ('Otros Ingresos', 'Coins', 'ingreso', FALSE)
+      `);
+      console.log("Default categories seeded successfully");
+    }
+
     console.log("Database initialized");
   } catch (err) {
     console.error("Database initialization failed:", err);
@@ -140,6 +206,18 @@ async function startServer() {
     });
   };
 
+  app.get("/api/auth/me", authenticateToken, async (req: any, res) => {
+    try {
+      const result = await pool.query("SELECT id, nombre, correo, moneda, creado_en FROM usuarios WHERE id = $1", [req.userId]);
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(result.rows[0]);
+    } catch (err) {
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
   // --- Transaction Routes ---
   app.get("/api/transactions", authenticateToken, async (req: any, res) => {
     try {
@@ -159,14 +237,50 @@ async function startServer() {
 
   app.post("/api/transactions", authenticateToken, async (req: any, res) => {
     const { tipo, monto, descripcion, fecha_transaccion, categoria_id, categoria_ia, etiquetas_ia } = req.body;
+    
+    // --- Validations ---
+    const numericMonto = Number(monto);
+    if (isNaN(numericMonto) || numericMonto <= 0) {
+      return res.status(400).json({ error: "El monto debe ser un número positivo mayor que cero." });
+    }
+    if (tipo !== 'ingreso' && tipo !== 'gasto') {
+      return res.status(400).json({ error: "Tipo de transacción inválido." });
+    }
+    if (!fecha_transaccion) {
+      return res.status(400).json({ error: "La fecha de la transacción es obligatoria." });
+    }
+
     try {
-      const result = await pool.query(
+      // Validar propiedad/existencia del categoria_id y consistencia de tipo
+      if (categoria_id) {
+        const catCheck = await pool.query(
+          "SELECT * FROM categorias WHERE id = $1 AND (usuario_id IS NULL OR usuario_id = $2)",
+          [categoria_id, req.userId]
+        );
+        if (catCheck.rows.length === 0) {
+          return res.status(400).json({ error: "La categoría especificada no es válida o no te pertenece." });
+        }
+        if (catCheck.rows[0].tipo !== tipo) {
+          return res.status(400).json({ error: "El tipo de la categoría no coincide con el tipo de movimiento." });
+        }
+      }
+
+      const insertResult = await pool.query(
         `INSERT INTO transacciones (usuario_id, tipo, monto, descripcion, fecha_transaccion, categoria_id, categoria_ia, etiquetas_ia) 
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [req.userId, tipo, monto, descripcion, fecha_transaccion, categoria_id, categoria_ia, etiquetas_ia]
+        [req.userId, tipo, numericMonto, descripcion, fecha_transaccion, categoria_id || null, categoria_ia, etiquetas_ia]
       );
-      res.json(result.rows[0]);
+      const newTxId = insertResult.rows[0].id;
+      const fullResult = await pool.query(
+        `SELECT t.*, c.nombre as categoria_nombre, c.icono as categoria_icono 
+         FROM transacciones t 
+         LEFT JOIN categorias c ON t.categoria_id = c.id 
+         WHERE t.id = $1`,
+        [newTxId]
+      );
+      res.json(fullResult.rows[0]);
     } catch (err) {
+      console.error("Create transaction error:", err);
       res.status(500).json({ error: "Failed to create transaction" });
     }
   });
@@ -188,11 +302,37 @@ async function startServer() {
 
   app.post("/api/categories", authenticateToken, async (req: any, res) => {
     const { nombre, icono, tipo } = req.body;
-    const result = await pool.query(
-      "INSERT INTO categorias (nombre, icono, tipo, es_personalizada, usuario_id) VALUES ($1, $2, $3, TRUE, $4) RETURNING *",
-      [nombre, icono, tipo, req.userId]
-    );
-    res.json(result.rows[0]);
+    if (!nombre || !nombre.trim()) {
+      return res.status(400).json({ error: "El nombre de la categoría es obligatorio." });
+    }
+    if (tipo !== 'ingreso' && tipo !== 'gasto') {
+      return res.status(400).json({ error: "Tipo de categoría inválido." });
+    }
+
+    try {
+      const normalizedNombre = nombre.trim();
+      // Evitar race conditions: buscar si ya existe para este usuario (o es global)
+      const existing = await pool.query(
+        `SELECT * FROM categorias 
+         WHERE (usuario_id IS NULL OR usuario_id = $1) 
+           AND LOWER(nombre) = LOWER($2) 
+           AND tipo = $3`,
+        [req.userId, normalizedNombre, tipo]
+      );
+
+      if (existing.rows.length > 0) {
+        return res.json(existing.rows[0]);
+      }
+
+      const result = await pool.query(
+        "INSERT INTO categorias (nombre, icono, tipo, es_personalizada, usuario_id) VALUES ($1, $2, $3, TRUE, $4) RETURNING *",
+        [normalizedNombre, icono || "Tag", tipo, req.userId]
+      );
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error("Create category error:", err);
+      res.status(500).json({ error: "No se pudo crear la categoría." });
+    }
   });
 
   // --- Budget Routes ---
@@ -209,15 +349,52 @@ async function startServer() {
 
   app.post("/api/budgets", authenticateToken, async (req: any, res) => {
     const { categoria_id, monto_limite, mes, anio } = req.body;
-    const result = await pool.query(
-      `INSERT INTO presupuestos (usuario_id, categoria_id, monto_limite, mes, anio) 
-       VALUES ($1, $2, $3, $4, $5) 
-       ON CONFLICT (usuario_id, categoria_id, mes, anio) 
-       DO UPDATE SET monto_limite = EXCLUDED.monto_limite 
-       RETURNING *`,
-      [req.userId, categoria_id, monto_limite, mes, anio]
-    );
-    res.json(result.rows[0]);
+    
+    // --- Validations ---
+    const numericMonto = Number(monto_limite);
+    if (isNaN(numericMonto) || numericMonto <= 0) {
+      return res.status(400).json({ error: "El monto límite del presupuesto debe ser un número positivo mayor que cero." });
+    }
+    const numMes = Number(mes);
+    const numAnio = Number(anio);
+    if (isNaN(numMes) || numMes < 1 || numMes > 12) {
+      return res.status(400).json({ error: "Suministre un número de mes válido entre 1 y 12." });
+    }
+    if (isNaN(numAnio) || numAnio < 2000 || numAnio > 2100) {
+      return res.status(400).json({ error: "Suministre un año válido entre 2000 y 2100." });
+    }
+
+    try {
+      // Validar que la categoría exista y pertenezca al usuario (o sea global)
+      const catCheck = await pool.query(
+        "SELECT * FROM categorias WHERE id = $1 AND (usuario_id IS NULL OR usuario_id = $2)",
+        [categoria_id, req.userId]
+      );
+      if (catCheck.rows.length === 0) {
+        return res.status(400).json({ error: "La categoría especificada no es válida o no te pertenece." });
+      }
+
+      const insertResult = await pool.query(
+        `INSERT INTO presupuestos (usuario_id, categoria_id, monto_limite, mes, anio) 
+         VALUES ($1, $2, $3, $4, $5) 
+         ON CONFLICT (usuario_id, categoria_id, mes, anio) 
+         DO UPDATE SET monto_limite = EXCLUDED.monto_limite 
+         RETURNING *`,
+        [req.userId, categoria_id, numericMonto, numMes, numAnio]
+      );
+      const newBudgetId = insertResult.rows[0].id;
+      const fullResult = await pool.query(
+        `SELECT b.*, c.nombre as categoria_nombre 
+         FROM presupuestos b 
+         JOIN categorias c ON b.categoria_id = c.id 
+         WHERE b.id = $1`,
+        [newBudgetId]
+      );
+      res.json(fullResult.rows[0]);
+    } catch (err) {
+      console.error("Create budget error:", err);
+      res.status(500).json({ error: "Failed to create budget" });
+    }
   });
 
   // --- AI Perspectives ---

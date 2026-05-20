@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../lib/api';
-import { Card, Button, Input, Select } from './ui';
+import { Card, Button, Input, Select, cn } from './ui';
 import { Plus, Target, AlertTriangle } from 'lucide-react';
 
 export function Budgets() {
@@ -13,9 +13,13 @@ export function Budgets() {
     anio: new Date().getFullYear()
   });
 
-  const getSpentAmount = (categoria_id: number) => {
+  const getSpentAmount = (categoria_id: number, mes: number, anio: number) => {
     return transactions
-      .filter(t => t.categoria_id === categoria_id && t.tipo === 'gasto')
+      .filter(t => {
+        if (Number(t.categoria_id) !== Number(categoria_id) || t.tipo !== 'gasto' || !t.fecha_transaccion) return false;
+        const [y, m] = t.fecha_transaccion.split('T')[0].split('-').map(Number);
+        return m === mes && y === anio;
+      })
       .reduce((sum, t) => sum + Number(t.monto), 0);
   };
 
@@ -80,7 +84,7 @@ export function Budgets() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {budgets.map(budget => {
-          const spent = getSpentAmount(budget.categoria_id);
+          const spent = getSpentAmount(budget.categoria_id, budget.mes, budget.anio);
           const percentage = (spent / budget.monto_limite) * 100;
           const isWarning = percentage >= 80;
 

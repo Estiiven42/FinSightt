@@ -6,6 +6,12 @@ import { Plus, Trash2, Sparkles, Download } from 'lucide-react';
 import { format } from 'date-fns';
 import api from '../lib/api';
 
+const parseLocalDate = (dateStr: string) => {
+  if (!dateStr) return new Date();
+  const [year, month, day] = dateStr.split('T')[0].split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
+
 export function Transactions() {
   const { transactions, fetchData } = useAppStore();
   const navigate = useNavigate();
@@ -61,7 +67,7 @@ export function Transactions() {
                 transactions.map(t => (
                   <tr key={t.id} className="hover:bg-gray-50/50 transition-colors group">
                     <td className="px-6 py-4 text-sm font-medium text-gray-500">
-                      {format(new Date(t.fecha_transaccion), 'dd MMM, yyyy')}
+                      {format(parseLocalDate(t.fecha_transaccion), 'dd MMM, yyyy')}
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col">

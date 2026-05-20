@@ -10,6 +10,10 @@ export function NewTransaction({ onCancel, onSuccess }: { onCancel: () => void, 
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [error, setError] = useState('');
   
+  const [isCreatingCustom, setIsCreatingCustom] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [isCreatingCatLoading, setIsCreatingCatLoading] = useState(false);
+
   const [formData, setFormData] = useState({
     descripcion: '',
     monto: '',
@@ -19,6 +23,33 @@ export function NewTransaction({ onCancel, onSuccess }: { onCancel: () => void, 
     categoria_ia: '',
     etiquetas_ia: [] as string[]
   });
+
+  const handleCreateCustomCategory = async () => {
+    if (!newCatName.trim()) return;
+    setIsCreatingCatLoading(true);
+    setError('');
+    try {
+      const res = await api.post('/categories', {
+        nombre: newCatName.trim(),
+        icono: formData.tipo === 'ingreso' ? 'Coins' : 'Tag',
+        tipo: formData.tipo
+      });
+      
+      // Actualizar el estado global de Zustand para incluir la nueva categoría
+      useAppStore.setState(state => ({
+        categories: [...state.categories, res.data]
+      }));
+
+      // Seleccionar automáticamente la nueva categoría
+      setFormData(prev => ({ ...prev, categoria_id: String(res.data.id) }));
+      setNewCatName('');
+      setIsCreatingCustom(false);
+    } catch (err) {
+      console.error("Failed to create custom category:", err);
+      setError('No se pudo crear la categoría personalizada.');
+    }
+    setIsCreatingCatLoading(false);
+  };
 
   const handleAiCategorize = async () => {
     if (!formData.descripcion || !formData.monto) {
@@ -49,6 +80,15 @@ export function NewTransaction({ onCancel, onSuccess }: { onCancel: () => void, 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.descripcion.trim()) {
+      setError('Por favor ingresa una descripción para el movimiento.');
+      return;
+    }
+    const numericMonto = Number(formData.monto);
+    if (isNaN(numericMonto) || numericMonto <= 0) {
+      setError('El monto debe ser un número positivo mayor que cero.');
+      return;
+    }
     if (!formData.categoria_id) {
       setError('Por favor selecciona una categoría.');
       return;
@@ -57,7 +97,7 @@ export function NewTransaction({ onCancel, onSuccess }: { onCancel: () => void, 
     try {
       await addTransaction({
         ...formData,
-        monto: Number(formData.monto),
+        monto: numericMonto,
         categoria_id: Number(formData.categoria_id)
       });
       onSuccess();
@@ -95,21 +135,71 @@ export function NewTransaction({ onCancel, onSuccess }: { onCancel: () => void, 
           <Select 
             label="Tipo de Movimiento"
             value={formData.tipo}
-            onChange={e => setFormData({...formData, tipo: e.target.value as any})}
+            onChange={e => setFormData({...formData, tipo: e.target.value as any, categoria_id: ''})}
             options={[
               { label: 'Gasto', value: 'gasto' },
               { label: 'Ingreso', value: 'ingreso' }
             ]}
           />
-          <Select 
-            label="Categoría"
-            value={formData.categoria_id}
-            onChange={e => setFormData({...formData, categoria_id: e.target.value})}
-            options={[
-              { label: 'Seleccionar...', value: '' },
-              ...categories.map(c => ({ label: c.nombre, value: c.id }))
-            ]}
-          />
+          <div className="flex flex-col justify-end">
+            <Select 
+              label="Categoría"
+              value={formData.categoria_id}
+              onChange={e => {
+                if (e.target.value === '__add_custom__') {
+                  setIsCreatingCustom(true);
+                } else {
+                  setFormData({...formData, categoria_id: e.target.value});
+                }
+              }}
+              options={[
+                { label: 'Seleccionar...', value: '' },
+                ...categories
+                  .filter(c => c.tipo === formData.tipo)
+                  .map(c => ({ label: c.nombre, value: String(c.id) })),
+                { label: '➕ Crear Categoría...', value: '__add_custom__' }
+              ]}
+            />
+            {!isCreatingCustom && (
+              <button 
+                type="button" 
+                onClick={() => setIsCreatingCustom(true)}
+                className="text-xs text-left text-gray-500 hover:text-black font-semibold mt-1.5 self-start underline decoration-dotted transition-colors"
+                id="btn-add-custom-cat"
+              >
+                + ¿Agregar otra categoría personalizada?
+              </button>
+            )}
+          </div>
+
+          {isCreatingCustom && (
+            <div className="col-span-1 md:col-span-2 p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-3">
+              <h4 className="text-xs font-bold text-gray-700 uppercase tracking-widest">Crear Categoría Personalizada ({formData.tipo})</h4>
+              <div className="flex gap-2 items-end">
+                <Input 
+                  placeholder="Ej. Suscripciones o Regalos" 
+                  value={newCatName}
+                  onChange={e => setNewCatName(e.target.value)}
+                  className="flex-1"
+                />
+                <Button 
+                  onClick={handleCreateCustomCategory} 
+                  disabled={isCreatingCatLoading || !newCatName.trim()}
+                  className="h-[42px] px-4"
+                >
+                  {isCreatingCatLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Guardar'}
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  onClick={() => { setIsCreatingCustom(false); setNewCatName(''); }}
+                  className="h-[42px] px-3"
+                >
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+          )}
+
           <Input 
             label="Fecha"
             type="date"

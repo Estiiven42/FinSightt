@@ -1,3 +1,4 @@
+import React from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -5,7 +6,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function Card({ children, className, id }: { children: React.ReactNode, className?: string, id?: string }) {
+export function Card({ children, className, id }: { children: React.ReactNode, className?: string, id?: string, key?: any }) {
   return (
     <div id={id} className={cn("bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm", className)}>
       {children}

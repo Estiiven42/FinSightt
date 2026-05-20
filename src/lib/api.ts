@@ -76,8 +76,18 @@ interface AppState {
   saveAIInsight: (tipo: string, contenido: string) => Promise<void>;
 }
 
+// Helper to safely parse JSON from localStorage
+const getInitialUser = (): User | null => {
+  try {
+    const cached = localStorage.getItem('user');
+    return cached ? JSON.parse(cached) : null;
+  } catch {
+    return null;
+  }
+};
+
 export const useAppStore = create<AppState>((set, get) => ({
-  user: null,
+  user: getInitialUser(),
   token: localStorage.getItem('token'),
   transactions: [],
   categories: [],
@@ -87,31 +97,54 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setAuth: (user, token) => {
     localStorage.setItem('token', token);
+    localStorage.setItem('user', JSON.stringify(user));
     set({ user, token });
   },
 
   logout: () => {
     localStorage.removeItem('token');
-    set({ user: null, token: null, transactions: [], budgets: [] });
+    localStorage.removeItem('user');
+    set({ user: null, token: null, transactions: [], budgets: [], insights: [] });
   },
 
   fetchData: async () => {
     set({ isLoading: true });
     try {
-      const [txs, cats, bdgts, ins] = await Promise.all([
+      const state = get();
+      const promises: Promise<any>[] = [
         api.get('/transactions'),
         api.get('/categories'),
         api.get('/budgets'),
         api.get('/ai-insights')
-      ]);
-      set({ 
-        transactions: txs.data, 
-        categories: cats.data, 
-        budgets: bdgts.data,
-        insights: ins.data
-      });
-    } catch (err) {
+      ];
+
+      // Hydrate user profile if token is present but user setup is missing (or to keep it updated)
+      const fetchUser = !state.user;
+      if (fetchUser) {
+        promises.push(api.get('/auth/me'));
+      }
+
+      const results = await Promise.all(promises);
+      
+      const updateData: Partial<AppState> = {
+        transactions: results[0].data,
+        categories: results[1].data,
+        budgets: results[2].data,
+        insights: results[3].data
+      };
+
+      if (fetchUser && results[4]) {
+        updateData.user = results[4].data;
+        localStorage.setItem('user', JSON.stringify(results[4].data));
+      }
+
+      set(updateData);
+    } catch (err: any) {
       console.error("Failed to fetch data", err);
+      // Automatically clear stale or expired authorization tokens
+      if (err?.response?.status === 401 || err?.response?.status === 403) {
+        get().logout();
+      }
     } finally {
       set({ isLoading: false });
     }
@@ -124,7 +157,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   addBudget: async (data) => {
     const res = await api.post('/budgets', data);
-    set((state) => ({ budgets: [...state.budgets.filter(b => b.categoria_id !== data.categoria_id), res.data] }));
+    set((state) => ({ budgets: [...state.budgets.filter(b => Number(b.categoria_id) !== Number(data.categoria_id)), res.data] }));
   },
 
   saveAIInsight: async (tipo, contenido) => {

@@ -48,15 +48,17 @@ export function Dashboard() {
     
     const monthlyIncome = transactions
       .filter(t => {
-        const td = new Date(t.fecha_transaccion);
-        return td.getMonth() === monthIndex && td.getFullYear() === year && t.tipo === 'ingreso';
+        if (!t.fecha_transaccion) return false;
+        const [y, m] = t.fecha_transaccion.split('T')[0].split('-').map(Number);
+        return (m - 1) === monthIndex && y === year && t.tipo === 'ingreso';
       })
       .reduce((sum, t) => sum + Number(t.monto), 0);
 
     const monthlyExpense = transactions
       .filter(t => {
-        const td = new Date(t.fecha_transaccion);
-        return td.getMonth() === monthIndex && td.getFullYear() === year && t.tipo === 'gasto';
+        if (!t.fecha_transaccion) return false;
+        const [y, m] = t.fecha_transaccion.split('T')[0].split('-').map(Number);
+        return (m - 1) === monthIndex && y === year && t.tipo === 'gasto';
       })
       .reduce((sum, t) => sum + Number(t.monto), 0);
 

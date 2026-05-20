@@ -17,7 +17,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Loader2 } from 'lucide-react';
 
 function AppLayout() {
-  const { token, fetchData, isLoading } = useAppStore();
+  const { token, fetchData, isLoading, isInitializing } = useAppStore();
   const location = useLocation();
 
   useEffect(() => {
@@ -28,6 +28,63 @@ function AppLayout() {
 
   if (!token) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (isInitializing) {
+    return (
+      <AnimatePresence>
+        <motion.div
+          initial={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.4, ease: "easeInOut" }}
+          className="fixed inset-0 z-50 bg-[#F8F9FA] flex flex-col items-center justify-center p-6 text-center select-none"
+        >
+          <div className="flex flex-col items-center justify-center max-w-sm">
+            {/* Logo block */}
+            <motion.div 
+              initial={{ scale: 0.85, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+              className="w-16 h-16 bg-black rounded-2xl flex items-center justify-center mb-6 shadow-xl shadow-black/10"
+            >
+              <span className="text-white font-black text-2xl tracking-tighter">FS</span>
+            </motion.div>
+
+            {/* Typography pairings */}
+            <motion.h1
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15, duration: 0.4 }}
+              className="text-2xl font-black tracking-tight text-gray-900 mb-2"
+            >
+              FinSight
+            </motion.h1>
+
+            <motion.p
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.25, duration: 0.4 }}
+              className="text-sm font-medium text-gray-400 mb-8"
+            >
+              Inicializando FinSight...
+            </motion.p>
+
+            {/* Custom spinner element */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.35, duration: 0.4 }}
+              className="flex items-center gap-3 px-4 py-2 border border-gray-150 rounded-full bg-white shadow-sm shadow-gray-100/50"
+            >
+              <Loader2 className="w-4 h-4 text-black animate-spin" />
+              <span className="text-xs font-bold uppercase tracking-widest text-gray-500">
+                Sincronizando Datos
+              </span>
+            </motion.div>
+          </div>
+        </motion.div>
+      </AnimatePresence>
+    );
   }
 
   const getViewTitle = () => {

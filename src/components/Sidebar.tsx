@@ -58,10 +58,19 @@ export function Sidebar() {
 
       <div className="p-4 mt-auto border-t border-gray-100">
         <div className="flex items-center gap-3 px-3 py-4 mb-2">
-          <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center border border-gray-200">
-            <span className="text-gray-600 font-bold uppercase text-xs">
-              {user?.nombre?.[0]}
-            </span>
+          <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center border border-gray-200 overflow-hidden shrink-0">
+            {user?.avatar_url ? (
+              <img 
+                src={user.avatar_url} 
+                alt={user.nombre} 
+                className="w-full h-full object-cover" 
+                referrerPolicy="no-referrer" 
+              />
+            ) : (
+              <span className="text-gray-600 font-bold uppercase text-xs">
+                {user?.nombre?.[0]}
+              </span>
+            )}
           </div>
           <div className="flex flex-col overflow-hidden">
             <span className="text-sm font-bold truncate">{user?.nombre}</span>

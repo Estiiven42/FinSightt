@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import axios from "axios";
 
 import { GoogleGenAI } from "@google/genai";
 
@@ -39,6 +40,8 @@ async function initDb() {
         correo VARCHAR(100) UNIQUE NOT NULL,
         contrasena_hash TEXT NOT NULL,
         moneda VARCHAR(10) DEFAULT 'USD',
+        google_id VARCHAR(100) UNIQUE,
+        avatar_url TEXT,
         creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -85,6 +88,14 @@ async function initDb() {
         generado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    // Ensure migration columns exist
+    try {
+      await client.query("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS google_id VARCHAR(100) UNIQUE;");
+      await client.query("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS avatar_url TEXT;");
+    } catch (columnErr) {
+      console.warn("Migration columns google_id / avatar_url already set or skipped:", columnErr);
+    }
 
     // --- Enforce Foreign Key Cascades & Deletes ---
     try {
@@ -208,13 +219,200 @@ async function startServer() {
 
   app.get("/api/auth/me", authenticateToken, async (req: any, res) => {
     try {
-      const result = await pool.query("SELECT id, nombre, correo, moneda, creado_en FROM usuarios WHERE id = $1", [req.userId]);
+      const result = await pool.query("SELECT id, nombre, correo, moneda, google_id, avatar_url, creado_en FROM usuarios WHERE id = $1", [req.userId]);
       if (result.rows.length === 0) {
         return res.status(404).json({ error: "User not found" });
       }
       res.json(result.rows[0]);
     } catch (err) {
       res.status(500).json({ error: "Server error" });
+    }
+  });
+
+  // --- Google OAuth Routes (Popup-Based Flow) ---
+  app.get("/api/auth/google/url", (req: any, res) => {
+    const googleClientId = process.env.GOOGLE_CLIENT_ID;
+    if (!googleClientId) {
+      return res.status(400).json({
+        error: "Google Sign-In no configurado",
+        message: "Por favor, configure la variable de entorno GOOGLE_CLIENT_ID en el menú de Settings en AI Studio."
+      });
+    }
+
+    // Determine target redirect URI dynamically using APP_URL or referrer/host
+    let redirectUri;
+    if (process.env.APP_URL) {
+      redirectUri = `${process.env.APP_URL.replace(/\/$/, "")}/api/auth/google/callback`;
+    } else {
+      const origin = req.headers["referer"] || req.headers["origin"] || `https://${req.get("host")}`;
+      const cleanOrigin = origin.replace(/\/$/, ""); // remove trailing slash
+      redirectUri = `${cleanOrigin}/api/auth/google/callback`;
+    }
+
+    const params = new URLSearchParams({
+      client_id: googleClientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: "openid email profile",
+      access_type: "offline",
+      prompt: "select_account"
+    });
+
+    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    res.json({ url: googleAuthUrl });
+  });
+
+  app.get("/api/auth/google/callback", async (req: any, res) => {
+    const { code } = req.query;
+    if (!code) {
+      return res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'OAUTH_AUTH_FAILURE', error: 'Falta el código de autorización de Google.' }, '*');
+                window.close();
+              } else {
+                document.body.innerHTML = '<h3>Error de Autenticación</h3><p>Falta el código de autorización de Google.</p>';
+              }
+            </script>
+          </body>
+        </html>
+      `);
+    }
+
+    const googleClientId = process.env.GOOGLE_CLIENT_ID;
+    const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    if (!googleClientId || !googleClientSecret) {
+      return res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'OAUTH_AUTH_FAILURE', error: 'Google OAuth Client ID o Secret no configurados en las variables de entorno.' }, '*');
+                window.close();
+              } else {
+                document.body.innerHTML = '<h3>Error de Autenticación</h3><p>Google OAuth Client ID o Secret no configurados en las variables de entorno de AI Studio.</p>';
+              }
+            </script>
+          </body>
+        </html>
+      `);
+    }
+
+    try {
+      // Reconstruct target redirectUri dynamically to match state values during exchange
+      let redirectUri;
+      if (process.env.APP_URL) {
+        redirectUri = `${process.env.APP_URL.replace(/\/$/, "")}/api/auth/google/callback`;
+      } else {
+        const requestHost = req.get("host");
+        const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
+        redirectUri = `${isHttps ? "https" : "http"}://${requestHost}/api/auth/google/callback`;
+      }
+
+      // Exchange code for token
+      const tokenResponse = await axios.post("https://oauth2.googleapis.com/token", {
+        code,
+        client_id: googleClientId,
+        client_secret: googleClientSecret,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code"
+      });
+
+      const { access_token } = tokenResponse.data;
+
+      // Request user's details
+      const userinfoResponse = await axios.get("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${access_token}` }
+      });
+
+      const { sub, email, name: rawName, picture } = userinfoResponse.data;
+      if (!email) {
+        throw new Error("No se pudo obtener el correo de Google para esta cuenta.");
+      }
+
+      const name = rawName || email.split("@")[0];
+
+      // Identify or register user
+      // 1. Try search by google_id
+      let userResult = await pool.query("SELECT id, nombre, correo, moneda, google_id, avatar_url, creado_en FROM usuarios WHERE google_id = $1", [sub]);
+      let user;
+
+      if (userResult.rows.length > 0) {
+        user = userResult.rows[0];
+        // Ensure avatar is up to date if modified in Google settings
+        if (user.avatar_url !== picture || user.nombre !== name) {
+          const updateRes = await pool.query(
+            "UPDATE usuarios SET nombre = $1, avatar_url = COALESCE($2, avatar_url) WHERE id = $3 RETURNING id, nombre, correo, moneda, google_id, avatar_url, creado_en",
+            [name, picture, user.id]
+          );
+          user = updateRes.rows[0];
+        }
+      } else {
+        // 2. Try search by email (to link previous standard email/password logins with Google)
+        let emailResult = await pool.query("SELECT * FROM usuarios WHERE correo = $1", [email]);
+        if (emailResult.rows.length > 0) {
+          const existingUser = emailResult.rows[0];
+          const updateRes = await pool.query(
+            "UPDATE usuarios SET google_id = $1, avatar_url = COALESCE(avatar_url, $2) WHERE id = $3 RETURNING id, nombre, correo, moneda, google_id, avatar_url, creado_en",
+            [sub, picture, existingUser.id]
+          );
+          user = updateRes.rows[0];
+        } else {
+          // 3. Register brand-new user
+          const tempPassword = Math.random().toString(36).slice(-10) + Date.now().toString();
+          const hashedPassword = await bcrypt.hash(tempPassword, 12);
+          const insertResult = await pool.query(
+            "INSERT INTO usuarios (nombre, correo, contrasena_hash, moneda, google_id, avatar_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, nombre, correo, moneda, google_id, avatar_url, creado_en",
+            [name, email, hashedPassword, "USD", sub, picture || null]
+          );
+          user = insertResult.rows[0];
+        }
+      }
+
+      // Generate localized JWT Token
+      const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "24h" });
+
+      res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({
+                  type: 'OAUTH_AUTH_SUCCESS',
+                  payload: {
+                    user: ${JSON.stringify(user)},
+                    token: ${JSON.stringify(token)}
+                  }
+                }, '*');
+                window.close();
+              } else {
+                window.location.href = '/';
+              }
+            </script>
+            <p>Excelente! Autenticación de Google exitosa. Esta ventana se cerrará en breve...</p>
+          </body>
+        </html>
+      `);
+    } catch (err: any) {
+      console.error("Error in Google OAuth Callback:", err.response?.data || err.message || err);
+      const errMsg = err.response?.data?.error_description || err.message || "Fallo en el servidor al autenticar con Google.";
+      res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'OAUTH_AUTH_FAILURE', error: ${JSON.stringify(errMsg)} }, '*');
+                window.close();
+              } else {
+                document.body.innerHTML = '<h3>Error de Autenticación</h3><p>' + ${JSON.stringify(errMsg)} + '</p>';
+              }
+            </script>
+          </body>
+        </html>
+      `);
     }
   });
 

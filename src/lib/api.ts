@@ -20,6 +20,8 @@ export interface User {
   nombre: string;
   correo: string;
   moneda: string;
+  google_id?: string;
+  avatar_url?: string;
 }
 
 export interface Category {
@@ -67,6 +69,7 @@ interface AppState {
   budgets: Budget[];
   insights: AIInsight[];
   isLoading: boolean;
+  isInitializing: boolean;
   
   setAuth: (user: User, token: string) => void;
   logout: () => void;
@@ -94,17 +97,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   budgets: [],
   insights: [],
   isLoading: false,
+  isInitializing: !!localStorage.getItem('token'),
 
   setAuth: (user, token) => {
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(user));
-    set({ user, token });
+    set({ user, token, isInitializing: false });
   },
 
   logout: () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    set({ user: null, token: null, transactions: [], budgets: [], insights: [] });
+    set({ user: null, token: null, transactions: [], budgets: [], insights: [], isInitializing: false });
   },
 
   fetchData: async () => {
@@ -146,7 +150,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         get().logout();
       }
     } finally {
-      set({ isLoading: false });
+      set({ isLoading: false, isInitializing: false });
     }
   },
 

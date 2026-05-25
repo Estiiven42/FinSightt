@@ -1,13 +1,43 @@
 import axios from 'axios';
 import { create } from 'zustand';
 
+// --- Safe Storage Wrapper to prevent SecurityErrors in Sandboxed iFrames ---
+const inMemoryStorage: Record<string, string> = {};
+
+export const safeStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      console.warn("[SafeStorage] Cannot read from localStorage, using memory fallback.", e);
+      return inMemoryStorage[key] || null;
+    }
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      console.warn("[SafeStorage] Cannot write to localStorage, using memory fallback.", e);
+      inMemoryStorage[key] = value;
+    }
+  },
+  removeItem: (key: string): void => {
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      console.warn("[SafeStorage] Cannot remove from localStorage, using memory fallback.", e);
+      delete inMemoryStorage[key];
+    }
+  }
+};
+
 // --- API Client ---
 const api = axios.create({
   baseURL: '/api'
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = safeStorage.getItem('token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -79,10 +109,10 @@ interface AppState {
   saveAIInsight: (tipo: string, contenido: string) => Promise<void>;
 }
 
-// Helper to safely parse JSON from localStorage
+// Helper to safely parse JSON from safeStorage
 const getInitialUser = (): User | null => {
   try {
-    const cached = localStorage.getItem('user');
+    const cached = safeStorage.getItem('user');
     return cached ? JSON.parse(cached) : null;
   } catch {
     return null;
@@ -91,23 +121,23 @@ const getInitialUser = (): User | null => {
 
 export const useAppStore = create<AppState>((set, get) => ({
   user: getInitialUser(),
-  token: localStorage.getItem('token'),
+  token: safeStorage.getItem('token'),
   transactions: [],
   categories: [],
   budgets: [],
   insights: [],
   isLoading: false,
-  isInitializing: !!localStorage.getItem('token'),
+  isInitializing: !!safeStorage.getItem('token'),
 
   setAuth: (user, token) => {
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(user));
+    safeStorage.setItem('token', token);
+    safeStorage.setItem('user', JSON.stringify(user));
     set({ user, token, isInitializing: false });
   },
 
   logout: () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    safeStorage.removeItem('token');
+    safeStorage.removeItem('user');
     set({ user: null, token: null, transactions: [], budgets: [], insights: [], isInitializing: false });
   },
 
@@ -139,7 +169,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       if (fetchUser && results[4]) {
         updateData.user = results[4].data;
-        localStorage.setItem('user', JSON.stringify(results[4].data));
+        safeStorage.setItem('user', JSON.stringify(results[4].data));
       }
 
       set(updateData);

@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../lib/api';
 import api from '../lib/api';
 import { Button, Input, Card } from './ui';
-import { LogIn, UserPlus, Wallet } from 'lucide-react';
+import { LogIn, UserPlus, Wallet, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useNavigate } from 'react-router-dom';
 
 const GoogleIcon = () => (
   <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
@@ -30,25 +31,52 @@ export function AuthView() {
   const [isLogin, setIsLogin] = useState(true);
   const [error, setError] = useState('');
   const [formData, setFormData] = useState({ nombre: '', correo: '', contrasena: '' });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  const token = useAppStore(state => state.token);
   const setAuth = useAppStore(state => state.setAuth);
+  const navigate = useNavigate();
+
+  // Handle automatic redirect if token is already or newly set
+  useEffect(() => {
+    if (token) {
+      console.log("[Auth Debug] Auth Token exists. Redirecting to home: /");
+      navigate('/', { replace: true });
+    }
+  }, [token, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
     setError('');
+    console.log("[Auth Debug] Auth submit triggered. Form data e-mail:", formData.correo);
     try {
       const endpoint = isLogin ? '/auth/login' : '/auth/register';
+      console.log(`[Auth Debug] Login request started on ${endpoint}...`);
       const res = await api.post(endpoint, formData);
+      console.log("[Auth Debug] Login response received successfully:", res.data?.user ? "User present" : "No user");
+      
+      console.log("[Auth Debug] Zustand state being updated via setAuth...");
       setAuth(res.data.user, res.data.token);
+      console.log("[Auth Debug] Token persisted and authentication completed. Immediate redirect initiated.");
+      navigate('/', { replace: true });
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Authentication failed');
+      console.error("[Auth Debug] Auth request execution failed:", err);
+      setError(err.response?.data?.error || 'Error de autenticación');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleGoogleLogin = async () => {
     setError('');
+    console.log("[Auth Debug] Google sign-in flow triggered by user interaction.");
     try {
       const res = await api.get('/auth/google/url');
       const authUrl = res.data.url;
+      console.log("[Auth Debug] Received Google oauth URL:", authUrl);
 
       // Open OAuth provider directly in a popup window centered on user's screen
       const width = 600;
@@ -56,6 +84,7 @@ export function AuthView() {
       const left = window.screen.width / 2 - width / 2;
       const top = window.screen.height / 2 - height / 2;
       
+      console.log("[Auth Debug] Attempting to open popup at centered position:", { left, top, width, height });
       const authWindow = window.open(
         authUrl,
         'google_oauth_popup',
@@ -63,9 +92,13 @@ export function AuthView() {
       );
 
       if (!authWindow) {
+        console.warn("[Auth Debug] Popup window creation blocked.");
         setError('El bloqueador de popups impidió abrir Google. Habilite los popups en su navegador.');
+      } else {
+        console.log("[Auth Debug] Google sign-in popup window spawned successfully.");
       }
     } catch (err: any) {
+      console.error("[Auth Debug] Failed to request Google authenticate URL:", err);
       setError(
         err.response?.data?.message || 
         err.response?.data?.error || 
@@ -76,22 +109,34 @@ export function AuthView() {
 
   useEffect(() => {
     const handleOAuthMessage = (event: MessageEvent) => {
-      // Security: Validate source origin (allow run.app subdomains and localhost)
+      // Security: Validate source origin (allow Run.app, Render, and localhost)
       const origin = event.origin;
-      const isValid = origin.endsWith('.run.app') || origin.startsWith('http://localhost') || origin.startsWith('https://localhost');
-      if (!isValid) return;
+      console.log("[Auth Debug] Heard message from origin:", origin);
+      const isValid = 
+        origin.endsWith('.run.app') || 
+        origin.endsWith('.onrender.com') || 
+        origin.startsWith('http://localhost') || 
+        origin.startsWith('https://localhost');
+      if (!isValid) {
+        console.warn("[Auth Debug] Refused message from untrusted external origin:", origin);
+        return;
+      }
 
       if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
         const { user, token } = event.data.payload;
+        console.log("[Auth Debug] OAuth channel success. Proceeding with setAuth configuration...");
         setAuth(user, token);
+        console.log("[Auth Debug] Initialization of Zustand session completed. Immediate redirect initiated.");
+        navigate('/', { replace: true });
       } else if (event.data?.type === 'OAUTH_AUTH_FAILURE') {
+        console.error("[Auth Debug] OAuth channel failure event reported:", event.data.error);
         setError(event.data.error || 'Fallo de autenticación con Google.');
       }
     };
 
     window.addEventListener('message', handleOAuthMessage);
     return () => window.removeEventListener('message', handleOAuthMessage);
-  }, [setAuth]);
+  }, [setAuth, navigate]);
 
   return (
     <div className="min-h-screen bg-[#F5F5F5] flex items-center justify-center p-4">
@@ -140,8 +185,12 @@ export function AuthView() {
 
             {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
 
-            <Button type="submit" className="w-full mt-4">
-              {isLogin ? (
+            <Button type="submit" className="w-full mt-4" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <span className="flex items-center gap-2 justify-center">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Procesando...
+                </span>
+              ) : isLogin ? (
                 <><LogIn className="w-4 h-4" /> Iniciar Sesión</>
               ) : (
                 <><UserPlus className="w-4 h-4" /> Crear Cuenta</>

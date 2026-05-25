@@ -2,5 +2,7 @@
   "name": "FinSight",
   "description": "A professional AI-powered financial analysis platform featuring transaction tracking, budget management, and intelligent spending insights powered by Gemini 1.5 Flash.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

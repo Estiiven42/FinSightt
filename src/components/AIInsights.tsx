@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAppStore, safeStorage } from '../lib/api';
 import { Card, Button } from './ui';
+import { formatCurrencyCOP } from '../lib/theme';
 import { 
   Sparkles, 
   Loader2, 
@@ -326,7 +327,7 @@ export function AIInsights() {
                         <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest flex items-center gap-1.5">
                           <TrendingUp className="w-3.5 h-3.5 text-purple-600" /> Predicción Gasto
                         </p>
-                        <p className="text-3xl font-black tracking-tight text-gray-900">${data.prediccion_monto || '0'}</p>
+                        <p className="text-2xl font-black tracking-tight text-gray-950 font-mono">{formatCurrencyCOP(data.prediccion_monto || 0)}</p>
                         <p className="text-[11px] text-gray-500 font-medium leading-tight pt-1">Próxima semana estimativa.</p>
                       </div>
                       
@@ -587,8 +588,8 @@ export function AIInsights() {
                                 <h5 className="font-bold text-gray-900 group-hover:text-purple-600 transition-colors">
                                   {tx.descripcion}
                                 </h5>
-                                <span className={`text-base font-black shrink-0 ${isGasto ? 'text-red-600' : 'text-emerald-600'}`}>
-                                  {isGasto ? '-' : '+'}${Number(tx.monto).toFixed(2)}
+                                <span className={`text-xs sm:text-sm font-black font-mono shrink-0 ${isGasto ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                  {isGasto ? '-' : '+'}{formatCurrencyCOP(tx.monto)}
                                 </span>
                               </div>
                               <p className="text-[10px] text-gray-400 font-medium italic truncate" title={tx.correo_asunto}>

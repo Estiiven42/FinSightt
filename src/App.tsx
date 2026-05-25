@@ -141,9 +141,33 @@ function AppLayout() {
   );
 }
 
+function TitleManager() {
+  const location = useLocation();
+
+  useEffect(() => {
+    const path = location.pathname;
+    if (path === '/') {
+      document.title = 'FinSight • Dashboard';
+    } else if (path.startsWith('/transacciones')) {
+      document.title = 'FinSight • Transacciones';
+    } else if (path === '/presupuestos') {
+      document.title = 'FinSight • Presupuestos';
+    } else if (path === '/perspectivas') {
+      document.title = 'FinSight • Perspectivas IA';
+    } else if (path === '/login') {
+      document.title = 'FinSight • Iniciar Sesión';
+    } else {
+      document.title = 'FinSight • Finanzas Inteligentes';
+    }
+  }, [location.pathname]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <TitleManager />
       <Routes>
         <Route path="/login" element={<AuthView />} />
         <Route path="/*" element={<AppLayout />} />

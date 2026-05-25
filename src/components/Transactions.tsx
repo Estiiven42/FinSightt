@@ -43,8 +43,22 @@ export function Transactions() {
     }
   };
 
-  const handleExport = () => {
-    window.open('/api/export/csv', '_blank');
+  const handleExport = async () => {
+    try {
+      const response = await api.get('/export/csv', { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'transacciones.csv');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to export CSV:", err);
+      alert("Error al exportar los datos. Asegúrate de haber iniciado sesión e inténtalo de nuevo.");
+    }
   };
 
   // Filter transactions according to selected financial type
